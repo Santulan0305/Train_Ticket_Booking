@@ -1,131 +1,170 @@
 package ticket.booking.service;
 
-import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import ticket.booking.entities.Ticket;
 import ticket.booking.entities.Train;
 import ticket.booking.entities.User;
 import ticket.booking.util.UserServiceUtil;
+
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.*;
 
-public class UserBookingService{
-    
-    private ObjectMapper objectMapper = new ObjectMapper();
+public class UserBookingService {
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private List<User> userList;
-
     private User user;
 
-    private final String USER_FILE_PATH = "app/src/main/java/ticket/booking/localDb/users.json";
+    private final String USER_FILE_PATH =
+            "app/src/main/java/ticket/booking/localDb/users.json";
 
-    public UserBookingService(User user) throws IOException {
-        this.user = user;
+    // ---------- CONSTRUCTOR FOR LOGIN ----------
+    public UserBookingService(User loginUser) throws IOException {
         loadUserListFromFile();
+
+        this.user = userList.stream()
+                .filter(u -> u.getName().equals(loginUser.getName())
+                        && UserServiceUtil.checkPassword(
+                        loginUser.getPassword(), u.getHashedPassword()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Invalid login"));
     }
 
+    // ---------- DEFAULT CONSTRUCTOR ----------
     public UserBookingService() throws IOException {
         loadUserListFromFile();
     }
 
     private void loadUserListFromFile() throws IOException {
-        userList = objectMapper.readValue(new File(USER_FILE_PATH), new TypeReference<List<User>>() {});
-    }
-
-    public Boolean loginUser(){
-        Optional<User> foundUser = userList.stream().filter(user1 -> {
-            return user1.getName().equals(user.getName()) && UserServiceUtil.checkPassword(user.getPassword(), user1.getHashedPassword());
-        }).findFirst();
-        return foundUser.isPresent();
-    }
-
-    public Boolean signUp(User user1){
-        try{
-            userList.add(user1);
-            saveUserListToFile();
-            return Boolean.TRUE;
-        }catch (IOException ex){
-            return Boolean.FALSE;
-        }
+        userList = objectMapper.readValue(
+                new File(USER_FILE_PATH),
+                new TypeReference<List<User>>() {});
     }
 
     private void saveUserListToFile() throws IOException {
-        File usersFile = new File(USER_FILE_PATH);
-        objectMapper.writeValue(usersFile, userList);
+        objectMapper.writeValue(new File(USER_FILE_PATH), userList);
     }
 
-    public void fetchBookings(){
-        Optional<User> userFetched = userList.stream().filter(user1 -> {
-            return user1.getName().equals(user.getName()) && UserServiceUtil.checkPassword(user.getPassword(), user1.getHashedPassword());
-        }).findFirst();
-        if(userFetched.isPresent()){
-            userFetched.get().printTickets();
+    // ---------- SIGN UP ----------
+    public Boolean signUp(User newUser) {
+        try {
+            userList.add(newUser);
+            saveUserListToFile();
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 
-        // todo: Complete this function
-         public Boolean cancelBooking(String ticketId){
-    
-        Scanner s = new Scanner(System.in);
-        System.out.println("Enter the ticket id to cancel");
-        ticketId = s.next();
-
-        if (ticketId == null || ticketId.isEmpty()) {
-            System.out.println("Ticket ID cannot be null or empty.");
-            return Boolean.FALSE;
+    // ---------- FETCH BOOKINGS ----------
+    public void fetchBookings() {
+        if (user.getTicketsBooked().isEmpty()) {
+            System.out.println("No bookings found");
+            return;
         }
-
-        String finalTicketId1 = ticketId;  //Because strings are immutable
-        boolean removed = user.getTicketsBooked().removeIf(ticket -> ticket.getTicketId().equals(finalTicketId1));
-
-        String finalTicketId = ticketId;
-        user.getTicketsBooked().removeIf(Ticket -> Ticket.getTicketId().equals(finalTicketId));
-        if (removed) {
-            System.out.println("Ticket with ID " + ticketId + " has been canceled.");
-            return Boolean.TRUE;
-        }else{
-        System.out.println("No ticket found with ID " + ticketId);
-            return Boolean.FALSE;
-        }
+        user.printTickets();
     }
-        
 
-    public List<Train> getTrains(String source, String destination){
-        try{
-            TrainService trainService = new TrainService();
-            return trainService.searchTrains(source, destination);
-        }catch(IOException ex){
+    // ---------- SEARCH TRAINS ----------
+    public List<Train> getTrains(String source, String destination) {
+        try {
+            return new TrainService().searchTrains(source, destination);
+        } catch (IOException e) {
             return new ArrayList<>();
         }
     }
 
-    public List<List<Integer>> fetchSeats(Train train){
-            return train.getSeats();
+    // ---------- FETCH SEATS ----------
+    public List<List<Integer>> fetchSeats(Train train) {
+        return train.getSeats();
     }
 
-    public Boolean bookTrainSeat(Train train, int row, int seat) {
-        try{
+    // ---------- BOOK SEAT (FIXED) ----------
+    public Boolean bookTrainSeat(Train train, int row, int col) {
+        try {
             TrainService trainService = new TrainService();
             List<List<Integer>> seats = train.getSeats();
-            if (row >= 0 && row < seats.size() && seat >= 0 && seat < seats.get(row).size()) {
-                if (seats.get(row).get(seat) == 0) {
-                    seats.get(row).set(seat, 1);
+
+            if (row >= 0 && row < seats.size() && col >= 0 && col < seats.get(row).size()) {
+                if (seats.get(row).get(col) == 0) {
+                    // Mark the seat as booked
+                    seats.get(row).set(col, 1);
                     train.setSeats(seats);
-                    trainService.addTrain(train);
+                    trainService.addTrain(train); // Update train data in file
+
+                    // Create the Ticket using the booked seat info
+                    Ticket ticket = new Ticket(
+                            UUID.randomUUID().toString(),           // ticketId
+                            user.getUserId(),                        // userId
+                            train.getStations().get(0),             // source station
+                            train.getStations().get(train.getStations().size() - 1), // destination station
+                            java.time.LocalDate.now().toString(),   // travel date
+                            train,                                   // train object
+                            row,                                     // seat row
+                            col                                      // seat column
+                    );
+
+                    // Add ticket to the user's booked tickets
+                    user.getTicketsBooked().add(ticket);
+
+                    // Save users to file
+                    saveUserListToFile();
+
                     return true; // Booking successful
                 } else {
-                    return false; // Seat is already booked
+                    return false; // Seat already booked
                 }
             } else {
-                return false; // Invalid row or seat index
+                return false; // Invalid seat
             }
-        }catch (IOException ex){
-            return Boolean.FALSE;
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            return false;
+        }
+    }
+
+
+    // ---------- CANCEL BOOKING (FIXED) ----------
+    public Boolean cancelBooking(String ticketId) {
+        Optional<Ticket> ticketOpt = user.getTicketsBooked()
+                .stream()
+                .filter(t -> t.getTicketId().equals(ticketId))
+                .findFirst();
+
+        if (!ticketOpt.isPresent()) {
+            System.out.println("Ticket not found");
+        }
+
+
+        Ticket ticket = ticketOpt.get();
+
+        try {
+            // Free seat
+            TrainService trainService = new TrainService();
+            List<Train> trains = trainService.searchTrains("", "");
+
+            for (Train t : trains) {
+                if (t.getTrainId().equals(ticket.getTrainId())) {
+                    t.getSeats()
+                            .get(ticket.getRow())
+                            .set(ticket.getCol(), 0);
+                    trainService.addTrain(t);
+                    break;
+                }
+            }
+
+            // Remove ticket
+            user.getTicketsBooked().remove(ticket);
+            saveUserListToFile();
+
+            System.out.println("Ticket cancelled successfully");
+            return true;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
         }
     }
 }
